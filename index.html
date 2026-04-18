@@ -1797,6 +1797,8 @@ function saveState() {
       retornos:  state.retornos  || [],
       conferencias: state.conferencias || [],
       solicitacoesCompra: state.solicitacoesCompra || [],
+      chamados:  state.chamados || [],
+      pontosChamados: state.pontosChamados || {},
       config:    state.config || {}
     };
 
@@ -1862,6 +1864,8 @@ async function loadStateFromFirebase() {
       state.conferencias = fbState.conferencias || [];
       state.solicitacoesCompra = fbState.solicitacoesCompra || [];
       state.retornos  = fbState.retornos  || [];
+      state.chamados  = fbState.chamados  || [];
+      state.pontosChamados = fbState.pontosChamados || {};
 
       console.log('✓ Estado carregado do Firebase (' + (fbState.pedidos||[]).length + ' pedidos, ' + state.equipe.length + ' membros) — loja: ' + lojaAtual);
       return true;
@@ -2410,8 +2414,6 @@ async function avancarLogin() {
       const resultado = await window.buscarUsuarioPorCpf(cpf);
       if (resultado) {
         user = resultado.user;
-        // Preserva lojaOrigem para uso no doLogin — evita fallback para af168
-        user._lojaOrigem = resultado.lojaOrigem;
         // Adiciona ao state.equipe local para próximas consultas nessa sessão
         if (!state.equipe.find(u => u.cpf === cpf)) state.equipe.push(user);
       }
@@ -2517,11 +2519,9 @@ function doLogin() {
   err.textContent = '';
 
   // Descobre lojas do usuário
-  // Prioridade: (1) user.lojas do Firestore, (2) lojaOrigem onde o CPF foi encontrado, (3) af168 como último recurso
-  const lojaFallback = user._lojaOrigem || 'af168';
   const lojas = user.cargo === 'gestor'
     ? Object.keys(LOJAS_CONFIG)
-    : (user.lojas && user.lojas.length ? user.lojas : [lojaFallback]);
+    : (user.lojas && user.lojas.length ? user.lojas : ['af168']);
 
   if (lojas.length === 1) {
     // Uma loja — entra direto
@@ -2566,7 +2566,7 @@ function entrarNaLoja(lojaId, user) {
   const navCons = document.getElementById('nav-dashboard_consolidado');
   if (navCons) navCons.classList.toggle('hidden', !isGestor);
 
-  const lojas = isGestor ? Object.keys(LOJAS_CONFIG) : (user.lojas && user.lojas.length ? user.lojas : [user._lojaOrigem || lojaId]);
+  const lojas = isGestor ? Object.keys(LOJAS_CONFIG) : (user.lojas && user.lojas.length ? user.lojas : ['af168']);
   document.getElementById('trocarLojaBtn').style.display = lojas.length > 1 ? 'block' : 'none';
 
   // Recarrega dados do Firebase da loja escolhida
@@ -2629,7 +2629,7 @@ function entrarNaLoja(lojaId, user) {
 function trocarLoja() {
   if (!state.currentUser) return;
   const user = state.currentUser;
-  const lojas = user.cargo === 'gestor' ? Object.keys(LOJAS_CONFIG) : (user.lojas && user.lojas.length ? user.lojas : [user._lojaOrigem || 'af168']);
+  const lojas = user.cargo === 'gestor' ? Object.keys(LOJAS_CONFIG) : (user.lojas || ['af168']);
   if (lojas.length <= 1) return;
   document.getElementById('appMain').classList.add('hidden');
   document.getElementById('pinScreen').classList.remove('hidden');
