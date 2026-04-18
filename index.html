@@ -1632,6 +1632,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
             <option value="funcionario">Funcionário</option>
             <option value="lider">Líder</option>
             <option value="gestor">Gestor</option>
+            <option value="franqueadora">Franqueadora</option>
           </select>
         </div>
         <div class="form-group">
@@ -1645,6 +1646,18 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
           <input class="form-input" id="membroPremiacao" type="number" min="0" max="100" step="0.1" placeholder="Ex: 2.5" style="max-width:120px" />
           <span style="font-size:13px;color:var(--text3)">% sobre o valor do pedido preparado</span>
         </div>
+      </div>
+      <div class="form-group" id="membroLojasGroup">
+        <label class="form-label">Lojas com acesso</label>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;padding:8px 0">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="membroLojaAf168" value="af168" style="width:16px;height:16px;cursor:pointer" /> AF168 — São Vicente · SP
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="membroLojaMf046" value="mf046" style="width:16px;height:16px;cursor:pointer" /> MF046 — Filial MF046
+          </label>
+        </div>
+        <div style="font-size:11px;color:var(--text3)">Gestores e franqueadoras têm acesso a todas as lojas automaticamente.</div>
       </div>
       <input type="hidden" id="membroEditId" />
     </div>
@@ -1730,6 +1743,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); font
     <div class="modal-body" id="detalhesPedidoBody" style="padding:0"></div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modalDetalhesPedido')">Fechar</button>
+      <button class="btn btn-secondary" id="detalhesChamadoBtn" style="color:var(--red);border-color:var(--red)" onclick="closeModal('modalDetalhesPedido');abrirChamadoDePedido(_pedidoDetalhesAtual?.id)">🚨 Chamado</button>
       <button class="btn btn-secondary" id="detalhesWhatsBtn" style="color:var(--green);border-color:var(--green)" onclick="abrirWhatsDetalhes()">WhatsApp</button>
     </div>
   </div>
@@ -1797,8 +1811,6 @@ function saveState() {
       retornos:  state.retornos  || [],
       conferencias: state.conferencias || [],
       solicitacoesCompra: state.solicitacoesCompra || [],
-      chamados:  state.chamados || [],
-      pontosChamados: state.pontosChamados || {},
       config:    state.config || {}
     };
 
@@ -1864,8 +1876,6 @@ async function loadStateFromFirebase() {
       state.conferencias = fbState.conferencias || [];
       state.solicitacoesCompra = fbState.solicitacoesCompra || [];
       state.retornos  = fbState.retornos  || [];
-      state.chamados  = fbState.chamados  || [];
-      state.pontosChamados = fbState.pontosChamados || {};
 
       console.log('✓ Estado carregado do Firebase (' + (fbState.pedidos||[]).length + ' pedidos, ' + state.equipe.length + ' membros) — loja: ' + lojaAtual);
       return true;
@@ -2430,6 +2440,7 @@ async function avancarLogin() {
   _loginUserTemp = user;
   document.getElementById('loginNomeUsuario').textContent = user.nome;
   document.getElementById('loginCargoUsuario').textContent =
+    user.cargo === 'franqueadora' ? '🏢 Franqueadora' :
     user.cargo === 'gestor' ? '👔 Gestor' :
     user.cargo === 'lider'  ? '📋 Líder'  : '👤 Funcionário';
   document.getElementById('loginStep1').style.display = 'none';
@@ -2518,19 +2529,19 @@ function doLogin() {
   }
   err.textContent = '';
 
-  // Descobre lojas do usuário
-  const lojas = user.cargo === 'gestor'
+  // Descobre lojas do usuário — franqueadora e gestor veem todas
+  const lojas = isGestorPlus(user)
     ? Object.keys(LOJAS_CONFIG)
-    : (user.lojas && user.lojas.length ? user.lojas : ['af168']);
+    : (user.lojas && user.lojas.length ? user.lojas : [user._lojaOrigem || 'af168']);
 
-  if (lojas.length === 1) {
-    // Uma loja — entra direto
+  if (lojas.length === 1 && isGestorPlus(user)) {
+    // Gestor/franqueadora com 1 loja — entra direto
     entrarNaLoja(lojas[0], user);
   } else {
-    // Múltiplas lojas — mostra seletor
+    // Todos os outros sempre veem o seletor — evita entrar na loja errada
     document.getElementById('loginStep2').style.display = 'none';
     document.getElementById('loginStep3').style.display = 'block';
-    document.getElementById('lojaSelectNome').textContent = 'Olá, ' + user.nome;
+    document.getElementById('lojaSelectNome').textContent = 'Olá, ' + user.nome + '! Selecione a loja:';
     const btns = document.getElementById('lojasBtns');
     btns.innerHTML = '';
     lojas.forEach(function(lojaId) {
@@ -2557,7 +2568,7 @@ function entrarNaLoja(lojaId, user) {
   document.getElementById('userAvatar').textContent = user.nome.charAt(0).toUpperCase();
   document.getElementById('lojaSubtitulo').textContent = cfg.nome + ' · ' + cfg.cidade;
 
-  const isGestor = user.cargo === 'gestor';
+  const isGestor = isGestorPlus(user);
   const isLider  = user.cargo === 'lider' || isGestor;
   document.getElementById('btnNovoAviso').classList.toggle('hidden', !isGestor);
   document.getElementById('btnNovaTarefa').classList.toggle('hidden', !isLider);
@@ -2629,7 +2640,7 @@ function entrarNaLoja(lojaId, user) {
 function trocarLoja() {
   if (!state.currentUser) return;
   const user = state.currentUser;
-  const lojas = user.cargo === 'gestor' ? Object.keys(LOJAS_CONFIG) : (user.lojas || ['af168']);
+  const lojas = isGestorPlus(user) ? Object.keys(LOJAS_CONFIG) : (user.lojas && user.lojas.length ? user.lojas : [user._lojaOrigem || 'af168']);
   if (lojas.length <= 1) return;
   document.getElementById('appMain').classList.add('hidden');
   document.getElementById('pinScreen').classList.remove('hidden');
@@ -2872,7 +2883,7 @@ function renderAvisos() {
           <div class="aviso-meta">${a.criadoPorNome} · ${formatTs(a.criadoEm)} · ${a.lidos?.length || 0} leitura(s)</div>
           <div class="aviso-actions">
             ${!jaLeu ? `<button class="btn btn-success btn-sm" onclick="confirmarLeitura('${a.id}')">✓ Confirmar leitura</button>` : '<div class="confirm-check">✓ Lido</div>'}
-            ${(state.currentUser?.cargo === 'gestor') ? `<button class="btn btn-secondary btn-sm" onclick="verLeituras('${a.id}')">Ver leituras (${a.lidos?.length || 0}/${state.equipe.length})</button>` : ''}
+            ${(isGestorPlus(state.currentUser)) ? `<button class="btn btn-secondary btn-sm" onclick="verLeituras('${a.id}')">Ver leituras (${a.lidos?.length || 0}/${state.equipe.length})</button>` : ''}
           </div>
         </div>
       </div>
@@ -2949,7 +2960,7 @@ function renderTarefas() {
   const statusBadge = { aberta: ['badge-yellow', 'Aberta'], 'em-andamento': ['badge-blue', 'Em andamento'], concluida: ['badge-green', 'Concluída'] };
   tbody.innerHTML = list.map(t => {
     const [sc, sl] = statusBadge[t.status] || ['badge-gray', t.status];
-    const canEdit = state.currentUser?.cargo === 'gestor' || state.currentUser?.id === t.responsavel;
+    const canEdit = isGestorPlus(state.currentUser) || state.currentUser?.id === t.responsavel;
     return `
       <tr>
         <td><div style="font-weight:500">${t.desc}</div>${t.obs ? `<div style="font-size:11px;color:var(--text3)">${t.obs}</div>` : ''}</td>
@@ -3480,7 +3491,8 @@ function gerarLinhaPedido(p) {
         ${['prazo_devolucao','prazo_troca'].includes(getFasePedido(p)) ? `<button class="btn btn-danger btn-sm" onclick="abrirTrocaRapida('${p.id}')" title="Iniciar troca ou devolução">↩</button>` : ''}
         <button class="btn btn-secondary btn-sm" onclick="verCustoFrete('${p.id}')" style="color:var(--green);border-color:var(--green)" title="Custo do frete">💰</button>
         <button class="btn btn-secondary btn-sm" onclick="abrirObservacoes('${p.id}')" style="color:var(--orange);border-color:var(--orange)" title="Observações${p.observacoes && p.observacoes.length ? ' ('+p.observacoes.length+')' : ''}">📝${p.observacoes && p.observacoes.length ? '<span style="font-size:10px;margin-left:2px">'+p.observacoes.length+'</span>' : ''}</button>
-          ${state.currentUser?.cargo === 'gestor' && !p.cancelado ? `<button class="btn btn-danger btn-sm" onclick="cancelarPedido('${p.id}')" title="Cancelar pedido">✗</button>` : ''}
+        <button class="btn btn-secondary btn-sm" onclick="abrirChamadoDePedido('${p.id}')" style="color:var(--red);border-color:var(--red)" title="Abrir chamado">🚨${(state.chamados||[]).filter(c=>c.pedidoId==='${p.id}'&&c.status!=='resolvido'&&c.status!=='cancelado').length ? '<span style="font-size:10px;margin-left:2px">'+(state.chamados||[]).filter(c=>c.pedidoId==='${p.id}'&&c.status!=='resolvido'&&c.status!=='cancelado').length+'</span>' : ''}</button>
+          ${isGestorPlus(state.currentUser) && !p.cancelado ? `<button class="btn btn-danger btn-sm" onclick="cancelarPedido('${p.id}')" title="Cancelar pedido">✗</button>` : ''}
       </td>
     </tr>
   `;
@@ -3492,7 +3504,7 @@ function renderPedidos() {
   const faseValida = ['recebido','transito','em_atraso','prazo_devolucao','prazo_troca','troca_dev','concluido'];
   if (f === 'cancelados') {
     list = list.filter(p => p.cancelado);
-    if (state.currentUser?.cargo !== 'gestor') { document.getElementById('pedidosTbody').innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:32px">Acesso restrito a gestores</td></tr>'; return; }
+    if (!isGestorPlus(state.currentUser)) { document.getElementById('pedidosTbody').innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text3);padding:32px">Acesso restrito a gestores</td></tr>'; return; }
   } else if (faseValida.includes(f)) list = list.filter(p => getFasePedido(p) === f && !p.cancelado);
   else if (f === 'todos') list = list.filter(p => !p.cancelado && getFasePedido(p) !== 'troca_dev');
   const tbody = document.getElementById('pedidosTbody');
@@ -4579,6 +4591,24 @@ function verTimeline(id) {
     });
   });
 
+  // Chamados vinculados a este pedido
+  const PRIO_COR = { critico:'var(--red)', alto:'var(--orange)', medio:'var(--blue)', baixo:'var(--text3)' };
+  const STATUS_ICON = { aberto:'🚨', em_andamento:'🔧', aguardando:'⏸', resolvido:'✅', cancelado:'✗' };
+  (state.chamados||[]).filter(c => c.pedidoId === p.id || c.pedidoNum === p.numero).forEach(c => {
+    const cor = PRIO_COR[c.prioridade] || 'var(--red)';
+    const statusIcon = STATUS_ICON[c.status] || '🚨';
+    const resolvido = c.status === 'resolvido' || c.status === 'cancelado';
+    eventosInternos.push({
+      icon: statusIcon, color: resolvido ? 'green' : 'red',
+      texto: '🚨 Chamado: ' + c.titulo + ' <span style="font-size:10px;padding:2px 6px;border-radius:4px;background:' + cor + '22;color:' + cor + ';border:1px solid ' + cor + '44">' + (c.prioridade||'médio') + '</span>',
+      user: c.criadoPorNome, ts: c.criadoEm, origem:'loja',
+      extra: c.descricao ? c.descricao.slice(0,120) + (c.descricao.length>120?'…':'') : null
+    });
+    if (resolvido && c.resolucao) {
+      eventosInternos.push({ icon:'✅', color:'green', texto:'Chamado resolvido: ' + c.resolucao.slice(0,100), user: c.resolvidoPorNome, ts: c.resolvidoEm, origem:'loja' });
+    }
+  });
+
   // Etapa atual pendente
   const etapaPendente = { inspecao:'Aguardando inspeção do produto', faturamento:'Aguardando faturamento', embalagem:'Aguardando embalagem', postado:'Aguardando postagem nos Correios' };
   const fase = getFasePedido(p);
@@ -4874,10 +4904,15 @@ function openModalMembro(editId) {
       }
       const pe = document.getElementById('membroPremiacao');
       if (pe) pe.value = u.premiacao || '';
+      // Popula checkboxes de lojas
+      document.getElementById('membroLojaAf168').checked = isGestorPlus(u) || (u.lojas||[]).includes('af168');
+      document.getElementById('membroLojaMf046').checked = isGestorPlus(u) || (u.lojas||[]).includes('mf046');
     }
   } else {
     document.getElementById('membroNome').value = '';
     document.getElementById('membroPin').value = '';
+    document.getElementById('membroLojaAf168').checked = false;
+    document.getElementById('membroLojaMf046').checked = false;
     if (cpfEl) {
       cpfEl.value = '';
       cpfEl.readOnly = false;
@@ -4911,9 +4946,20 @@ function salvarMembro() {
 
   if (editId) {
     const u = state.equipe.find(x => x.id === editId);
-    if (u) { u.nome = nome; u.cargo = cargo; if (pin) u.pin = pin; u.premiacao = premiacao; }
+    if (u) {
+      u.nome = nome; u.cargo = cargo; if (pin) u.pin = pin; u.premiacao = premiacao;
+      if (!isGestorPlus(u)) {
+        u.lojas = ['af168','mf046'].filter(id => document.getElementById('membroLoja' + id.replace(/\d/g, l => l) + (id === 'af168' ? 'Af168' : 'Mf046'))?.checked);
+        if (!u.lojas.length) { alert('Selecione ao menos uma loja.'); return; }
+      }
+    }
   } else {
-    state.equipe.push({ id: Date.now().toString(), nome, cpf, cargo, pin, premiacao });
+    const lojas = isGestorPlus({cargo}) ? [] : ['af168','mf046'].filter(id => {
+      const elId = id === 'af168' ? 'membroLojaAf168' : 'membroLojaMf046';
+      return document.getElementById(elId)?.checked;
+    });
+    if (!isGestorPlus({cargo}) && !lojas.length) { alert('Selecione ao menos uma loja.'); return; }
+    state.equipe.push({ id: Date.now().toString(), nome, cpf, cargo, pin, premiacao, lojas });
   }
   logAction('equipe', `Membro ${editId ? 'editado' : 'adicionado'}: ${nome}`);
   saveState();
@@ -4940,7 +4986,7 @@ function renderEquipe() {
   const tbody = document.getElementById('equipeTbody');
   const cargoLabel = { funcionario: 'Funcionário', lider: 'Líder', gestor: 'Gestor' };
   const cargoBadge = { funcionario: 'badge-gray', lider: 'badge-blue', gestor: 'badge-purple' };
-  const euSouGestor = state.currentUser?.cargo === 'gestor';
+  const euSouGestor = isGestorPlus(state.currentUser);
   const meuId = state.currentUser?.id;
 
   tbody.innerHTML = state.equipe.map(u => {
@@ -4973,6 +5019,13 @@ function renderEquipe() {
 // ============================================================
 // ⚓ MOD:UTILS | UTILS
 // ============================================================
+
+// Helper: retorna true para cargos com permissão de gestor ou superior
+function isGestorPlus(user) {
+  user = user || state.currentUser;
+  return user && (user.cargo === 'gestor' || user.cargo === 'franqueadora');
+}
+window.isGestorPlus = isGestorPlus;
 function formatTs(ts) {
   if (!ts) return '—';
   const d = new Date(ts);
@@ -5228,7 +5281,7 @@ window.filterTrocas = filterTrocas;
 
 function mostrarAbasCanceladas() {
   const aba = document.getElementById('tabCanceladasTrocas');
-  if (aba) aba.style.display = state.currentUser?.cargo === 'gestor' ? '' : 'none';
+  if (aba) aba.style.display = isGestorPlus(state.currentUser) ? '' : 'none';
 }
 window.mostrarAbasCanceladas = mostrarAbasCanceladas;
 
@@ -5298,9 +5351,9 @@ function renderTrocas(filtro) {
   else if (f === 'andamento') list = list.filter(t => ['retorno_recebido','em_analise','aguardando_produto','despachado'].includes(t.etapa));
   else if (f === 'concluidas') list = list.filter(t => t.etapa === 'concluida');
   else if (f === 'canceladas') {
-    if (state.currentUser?.cargo !== 'gestor') { document.getElementById('trocasList').innerHTML = '<div class="empty"><div class="empty-text">Acesso restrito a gestores</div></div>'; return; }
+    if (!isGestorPlus(state.currentUser)) { document.getElementById('trocasList').innerHTML = '<div class="empty"><div class="empty-text">Acesso restrito a gestores</div></div>'; return; }
     list = list.filter(t => t.etapa === 'cancelada');
-  } else if (f === 'todas') list = list.filter(t => t.etapa !== 'cancelada' || state.currentUser?.cargo === 'gestor');
+  } else if (f === 'todas') list = list.filter(t => t.etapa !== 'cancelada' || isGestorPlus(state.currentUser));
   const el = document.getElementById('trocasList');
   if (!list.length) {
     el.innerHTML = '<div class="empty"><div class="empty-icon">🔄</div><div class="empty-text">Nenhuma troca ou devolução</div></div>';
@@ -5437,7 +5490,7 @@ function atualizarValorDevolucao() {
 window.atualizarValorDevolucao = atualizarValorDevolucao;
 
 function tentarCancelarTroca(id) {
-  if (state.currentUser?.cargo !== 'gestor') {
+  if (!isGestorPlus(state.currentUser)) {
     alert('Apenas gestores podem cancelar trocas/devoluções.');
     return;
   }
@@ -6203,7 +6256,7 @@ function renderInsumos(filtro) {
         '<div style="flex:1"><div style="font-size:14px;font-weight:500">' + ins.nome + '</div>' +
         '<div style="font-size:12px;color:var(--text3)">Mínimo: ' + (ins.minimo || '—') + ' ' + (ins.unidade||'') + (ultimaConf ? ' · Última conf: ' + ultimaConf.qtd + ' ' + (ins.unidade||'') : '') + '</div></div>' +
         '<div style="display:flex;gap:6px">' +
-        (state.currentUser?.cargo === 'gestor' ? '<button class="btn btn-secondary btn-sm" onclick="openModalNovoInsumo(\'' + ins.id + '\')">Editar</button>' : '') +
+        (isGestorPlus(state.currentUser) ? '<button class="btn btn-secondary btn-sm" onclick="openModalNovoInsumo(\'' + ins.id + '\')">Editar</button>' : '') +
         '</div></div></div>';
     }).join('');
   } else if (f === 'conferencias') {
@@ -6318,7 +6371,7 @@ function retrocederFase(pedidoId) {
 window.retrocederFase = retrocederFase;
 
 function cancelarPedido(pedidoId) {
-  if (state.currentUser?.cargo !== 'gestor') { alert('Apenas gestores podem cancelar pedidos.'); return; }
+  if (!isGestorPlus(state.currentUser)) { alert('Apenas gestores podem cancelar pedidos.'); return; }
   const p = state.pedidos.find(x => x.id === pedidoId);
   if (!p) return;
   const motivo = prompt('Motivo do cancelamento (obrigatório):');
@@ -6336,7 +6389,7 @@ window.cancelarPedido = cancelarPedido;
 
 function mostrarAbasCanceladosPedidos() {
   const aba = document.getElementById('tabCanceladosPedidos');
-  if (aba) aba.style.display = state.currentUser?.cargo === 'gestor' ? '' : 'none';
+  if (aba) aba.style.display = isGestorPlus(state.currentUser) ? '' : 'none';
 }
 window.mostrarAbasCanceladosPedidos = mostrarAbasCanceladosPedidos;
 
@@ -6690,7 +6743,7 @@ window.showPage = function(name) {
   }
   // Esconde config para não-gestores
   const navConfig = document.getElementById('nav-config');
-  if (navConfig) navConfig.style.display = state.currentUser?.cargo === 'gestor' ? '' : 'none';
+  if (navConfig) navConfig.style.display = isGestorPlus(state.currentUser) ? '' : 'none';
 };
 
 function parseMoeda(val) {
@@ -6712,7 +6765,7 @@ function popularFiltroMembros() {
   });
   sel.value = atual;
   // Gestores veem todos; operadores só veem a si mesmos
-  if (state.currentUser?.cargo !== 'gestor') {
+  if (!isGestorPlus(state.currentUser)) {
     sel.value = state.currentUser?.nome || '';
     sel.disabled = true;
   } else {
@@ -7738,7 +7791,7 @@ function abrirPainelContatos(pedidoId) {
       const cor = cores[c.tipo] || 'var(--blue)';
       const icon = icons[c.tipo] || '📱';
       const resultado = c.tipo === 'tentativa' ? 'Tentativa de contato' : c.tipo.replace(/_/g,' ');
-      const fotos = c.fotos || [];
+      const fotos = (c.fotosUrls && c.fotosUrls.length) ? c.fotosUrls : (c.fotos || []);
 
       // Card do contato
       const card = document.createElement('div');
@@ -9208,7 +9261,7 @@ let _dashConsChartFat = null;
 
 // Mostra nav Consolidado só para gestores
 function atualizarNavConsolidado() {
-  const isGestor = state.currentUser?.cargo === 'gestor';
+  const isGestor = isGestorPlus(state.currentUser);
   const navEl = document.getElementById('nav-dashboard_consolidado');
   if (navEl) navEl.classList.toggle('hidden', !isGestor);
 }
@@ -9741,7 +9794,8 @@ function abrirDetalhesChamado(chamadoId) {
   }).join('') || '<div style="font-size:12px;color:var(--text3);padding:8px 0">Sem atividade registrada.</div>';
 
   // Fotos
-  const fotosHtml = (c.fotos || []).length ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">' + c.fotos.map(f => '<img src="'+f+'" onclick="verFotoGrande(this.src)" style="width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid var(--border2);cursor:pointer" />').join('') + '</div>' : '';
+  const _fotosArr = (c.fotosUrls && c.fotosUrls.length) ? c.fotosUrls : (c.fotos || []);
+  const fotosHtml = _fotosArr.length ? '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">' + _fotosArr.map(f => '<img src="'+f+'" onclick="verFotoGrande(this.src)" style="width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid var(--border2);cursor:pointer" />').join('') + '</div>' : '';
 
   // Botões de ação
   let botoesHtml = '';
