@@ -1811,6 +1811,8 @@ function saveState() {
       retornos:  state.retornos  || [],
       conferencias: state.conferencias || [],
       solicitacoesCompra: state.solicitacoesCompra || [],
+      chamados:  state.chamados || [],
+      pontosChamados: state.pontosChamados || {},
       config:    state.config || {}
     };
 
@@ -1876,6 +1878,8 @@ async function loadStateFromFirebase() {
       state.conferencias = fbState.conferencias || [];
       state.solicitacoesCompra = fbState.solicitacoesCompra || [];
       state.retornos  = fbState.retornos  || [];
+      state.chamados  = fbState.chamados  || [];
+      state.pontosChamados = fbState.pontosChamados || {};
 
       console.log('✓ Estado carregado do Firebase (' + (fbState.pedidos||[]).length + ' pedidos, ' + state.equipe.length + ' membros) — loja: ' + lojaAtual);
       return true;
@@ -2602,6 +2606,10 @@ function entrarNaLoja(lojaId, user) {
     setTimeout(function() {
       if (window.verificarChamadosPendentesLogin) window.verificarChamadosPendentesLogin();
     }, 2500);
+    // Verifica avisos não lidos e exibe popup ao logar
+    setTimeout(function() {
+      if (window.verificarAvisosLogin) window.verificarAvisosLogin();
+    }, 1500);
 
     // Inicia listener em tempo real para esta loja específica
     // Cancela listener anterior (de outra loja ou sessão anterior)
@@ -2621,6 +2629,12 @@ function entrarNaLoja(lojaId, user) {
         state.pedidos   = newState.pedidos   || state.pedidos;
         state.avisos    = newState.avisos    || state.avisos;
         state.tarefas   = newState.tarefas   || state.tarefas;
+        // Aviso novo em tempo real — notifica quem está logado
+        const avisosAntes = (state.avisos||[]).length;
+        state.avisos    = newState.avisos    || state.avisos;
+        if ((newState.avisos||[]).length > avisosAntes) {
+          setTimeout(function() { if (window.verificarAvisosLogin) window.verificarAvisosLogin(); }, 500);
+        }
         state.trocas    = newState.trocas    || state.trocas;
         state.historico = newState.historico || state.historico;
         // Restaura fotos locais nos pedidos recebidos
@@ -2890,6 +2904,65 @@ function renderAvisos() {
     `;
   }).join('');
 }
+// ── POPUP DE AVISOS NO LOGIN ──
+window.verificarAvisosLogin = function() {
+  const user = state.currentUser;
+  if (!user) return;
+  const naoLidos = (state.avisos || []).filter(a => !a.lidos?.includes(user.id));
+  if (!naoLidos.length) return;
+
+  const old = document.getElementById('popupAvisosLogin');
+  if (old) old.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'popupAvisosLogin';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:99998;display:flex;align-items:center;justify-content:center;padding:20px';
+
+  const urgentes = naoLidos.filter(a => a.urgencia === 'urgente');
+  const iconeTopo = urgentes.length ? '⚠️' : '📢';
+  const corTopo = urgentes.length ? 'rgba(226,75,74,0.08)' : 'rgba(29,158,117,0.08)';
+
+  const itens = naoLidos.slice(0,5).map(a => {
+    const icon = a.urgencia === 'urgente' ? '⚠️' : a.urgencia === 'info' ? 'ℹ️' : '📢';
+    const cor = a.urgencia === 'urgente' ? 'var(--red)' : a.urgencia === 'info' ? 'var(--blue)' : 'var(--text2)';
+    return `<div style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;background:var(--surface2);border-radius:8px;border:1px solid var(--border2)">
+      <span style="font-size:18px;flex-shrink:0">${icon}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;color:${cor}">${a.titulo}</div>
+        ${a.desc ? `<div style="font-size:11px;color:var(--text3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.desc}</div>` : ''}
+        <div style="font-size:10px;color:var(--text3);margin-top:3px">${a.criadoPorNome} · ${formatTs(a.criadoEm)}</div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const maisHtml = naoLidos.length > 5
+    ? `<div style="font-size:12px;color:var(--text3);text-align:center;padding:4px 0">+ ${naoLidos.length - 5} aviso(s) na aba Avisos</div>`
+    : '';
+
+  overlay.innerHTML = `
+    <div style="background:var(--surface);border-radius:16px;width:100%;max-width:460px;border:1px solid var(--border2);overflow:hidden">
+      <div style="padding:20px;background:${corTopo};border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:28px">${iconeTopo}</span>
+          <div>
+            <div style="font-size:16px;font-weight:700">Avisos não lidos</div>
+            <div style="font-size:12px;color:var(--text3);margin-top:2px">${naoLidos.length} aviso(s) aguardando sua confirmação</div>
+          </div>
+        </div>
+      </div>
+      <div style="padding:16px;display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto">
+        ${itens}
+        ${maisHtml}
+      </div>
+      <div style="padding:14px 16px;border-top:1px solid var(--border);display:flex;gap:8px">
+        <button onclick="document.getElementById('popupAvisosLogin').remove();showPage('avisos')" style="flex:1;background:var(--accent);color:#000;border:none;border-radius:8px;padding:10px;font-weight:700;cursor:pointer;font-size:13px">Ver avisos</button>
+        <button onclick="document.getElementById('popupAvisosLogin').remove()" style="flex:1;background:var(--surface2);color:var(--text);border:1px solid var(--border2);border-radius:8px;padding:10px;font-weight:600;cursor:pointer;font-size:13px">Fechar</button>
+      </div>
+    </div>`;
+
+  document.body.appendChild(overlay);
+};
+
 function confirmarLeitura(id) {
   const aviso = state.avisos.find(a => a.id === id);
   if (!aviso) return;
@@ -10288,6 +10361,7 @@ setInterval(function() {
 })();
 </script>
 
+<div style="display:none"><a href="https://www.siterastreio.com.br/" target="_blank">Rastreamento</a></div>
 </body>
 
 </html>
